@@ -5,41 +5,42 @@ declare(strict_types=1);
 namespace App\Application;
 
 use App\Infrastructure\Persistence\MessageRepository;
+use App\Services\BitrixStatusUpdater;
 use App\Services\SendLogger;
+use App\Support\BitrixRequest;
 
 final class HandleStatusCallbackAction
 {
     public function __construct(
         private readonly MessageRepository $messageRepository,
         private readonly SendLogger $logger,
+        private readonly BitrixStatusUpdater $bitrixStatusUpdater,
     ) {
     }
 
     public function __invoke(array $payload): array
     {
-        $providerMessageId = (string)(
-            $payload['provider_message_id']
-            ?? $payload['message_id']
-            ?? $payload['id']
-            ?? ''
-        );
+        $providerMessageId = BitrixRequest::resolveProviderMessageId($payload);
+        $providerReference = BitrixRequest::resolveProviderReference($payload);
+        $status = strtolower(BitrixRequest::resolveStatus($payload));
 
-        $status = (string)(
-            $payload['status']
-            ?? $payload['delivery_status']
-            ?? 'unknown'
-        );
-
-        if ($providerMessageId === '') {
-            throw new \RuntimeException('provider_message_id is required');
+        if ($providerMessageId === '' && $providerReference === '') {
+            throw new \RuntimeException('provider_message_id or reference is required');
         }
 
-        $existing = $this->messageRepository->findByProviderMessageId($providerMessageId);
+        $existing = $providerMessageId !== ''
+            ? $this->messageRepository->findByProviderMessageId($providerMessageId)
+            : null;
 
-        if (!$existing) {
+        if ($existing === null && $providerReference !== '') {
+            $existing = $this->messageRepository->findByProviderReference($providerReference);
+        }
+
+        if ($existing === null) {
             $record = [
                 'ts' => date('c'),
                 'provider_message_id' => $providerMessageId,
+                'provider_reference' => $providerReference,
                 'status' => $status,
                 'callback_only' => true,
                 'raw_payload' => $payload,
@@ -49,7 +50,7 @@ final class HandleStatusCallbackAction
 
             return [
                 'success' => true,
-                'message' => 'Status callback received, but message not found in local storage',
+                'message' => 'Status callback received, but message was not found in storage',
                 'data' => $record,
             ];
         }
@@ -60,22 +61,33 @@ final class HandleStatusCallbackAction
             'status_payload' => $payload,
         ];
 
-        $this->messageRepository->updateByProviderMessageId($providerMessageId, $patch);
+        if ($providerMessageId !== '' && (string)($existing['provider_message_id'] ?? '') === '') {
+            $patch['provider_message_id'] = $providerMessageId;
+        }
 
-        $record = array_replace($existing, $patch);
+        if ($providerReference !== '' && (string)($existing['provider_reference'] ?? '') === '') {
+            $patch['provider_reference'] = $providerReference;
+        }
+
+        $this->messageRepository->updateById((int)$existing['id'], $patch);
+        $updated = $this->messageRepository->findById((int)$existing['id']) ?? array_replace($existing, $patch);
+        $bitrixUpdate = $this->bitrixStatusUpdater->pushStatus($updated, $status);
 
         $this->logger->log([
             'ts' => date('c'),
             'type' => 'status_callback',
             'provider_message_id' => $providerMessageId,
+            'provider_reference' => $providerReference,
             'status' => $status,
+            'bitrix_status_update' => $bitrixUpdate,
             'raw_payload' => $payload,
         ]);
 
         return [
             'success' => true,
             'message' => 'Status updated',
-            'data' => $record,
+            'data' => $updated,
+            'bitrix_status_update' => $bitrixUpdate,
         ];
     }
 }

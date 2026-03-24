@@ -15,6 +15,10 @@ final class RegisterSenderAction
         $senderName = (string)($_ENV['B24_SENDER_NAME'] ?? 'Notificore SMS');
         $devInstallMock = filter_var($_ENV['DEV_INSTALL_MOCK'] ?? false, FILTER_VALIDATE_BOOL);
 
+        if ($baseUrl === '') {
+            throw new \RuntimeException('APP_BASE_URL is empty');
+        }
+
         $handlerUrl = $baseUrl . '/sms_handler.php';
 
         if (
@@ -34,6 +38,11 @@ final class RegisterSenderAction
         $client = new BitrixAppClient(
             domain: (string)$portal['domain'],
             accessToken: (string)$portal['access_token'],
+            refreshToken: (string)($portal['refresh_token'] ?? ''),
+            clientId: (string)($_ENV['B24_APP_CLIENT_ID'] ?? ''),
+            clientSecret: (string)($_ENV['B24_APP_CLIENT_SECRET'] ?? ''),
+            verifySsl: filter_var($_ENV['B24_VERIFY_SSL'] ?? true, FILTER_VALIDATE_BOOL),
+            oauthBaseUrl: (string)($_ENV['B24_OAUTH_BASE_URL'] ?? 'https://oauth.bitrix.info/oauth/token'),
         );
 
         return $client->ensureSmsSenderRegistered(

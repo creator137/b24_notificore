@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Infrastructure\App\AppContainer;
 use Dotenv\Dotenv;
 
 require __DIR__ . '/vendor/autoload.php';
@@ -11,15 +12,15 @@ $dotenv->safeLoad();
 
 date_default_timezone_set($_ENV['APP_TIMEZONE'] ?? 'Europe/Moscow');
 
-$storageDir = $_ENV['APP_STORAGE_DIR'] ?? (__DIR__ . '/storage');
-if (!str_starts_with($storageDir, DIRECTORY_SEPARATOR) && !preg_match('~^[A-Za-z]:[\\\\/]~', $storageDir)) {
-    $storageDir = __DIR__ . '/' . ltrim($storageDir, '/');
-}
+if (!function_exists('app_container')) {
+    function app_container(): AppContainer
+    {
+        static $container = null;
 
-if (!is_dir($storageDir)) {
-    mkdir($storageDir, 0777, true);
-}
+        if (!$container instanceof AppContainer) {
+            $container = AppContainer::boot(__DIR__);
+        }
 
-if (!is_dir(__DIR__ . '/logs')) {
-    mkdir(__DIR__ . '/logs', 0777, true);
+        return $container;
+    }
 }

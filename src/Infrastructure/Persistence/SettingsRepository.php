@@ -4,25 +4,51 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\Persistence;
 
+use App\Support\Json;
+use PDO;
+
 final class SettingsRepository
 {
-    private const FILE_NAME = 'settings.json';
-
     public function __construct(
-        private readonly JsonFileStore $store
-    ) {}
+        private readonly PDO $pdo
+    ) {
+    }
 
     public function save(string $memberId, array $settings): void
     {
-        $all = $this->store->read(self::FILE_NAME);
-        $all[$memberId] = $settings;
+        $memberId = trim($memberId);
 
-        $this->store->write(self::FILE_NAME, $all);
+        if ($memberId === '') {
+            throw new \RuntimeException('member_id is required');
+        }
+
+        $existing = $this->findByMemberId($memberId);
+        $normalized = array_replace($existing, $settings);
+        $payload = [
+            'member_id' => $memberId,
+            'settings_json' => Json::encode($normalized),
+            'updated_at' => date('c'),
+        ];
+
+        if ($existing === []) {
+            $sql = 'INSERT INTO settings (member_id, settings_json, updated_at) VALUES (:member_id, :settings_json, :updated_at)';
+        } else {
+            $sql = 'UPDATE settings SET settings_json = :settings_json, updated_at = :updated_at WHERE member_id = :member_id';
+        }
+
+        $this->pdo->prepare($sql)->execute($payload);
     }
 
     public function findByMemberId(string $memberId): array
     {
-        $all = $this->store->read(self::FILE_NAME);
-        return $all[$memberId] ?? [];
+        $statement = $this->pdo->prepare('SELECT settings_json FROM settings WHERE member_id = :member_id LIMIT 1');
+        $statement->execute(['member_id' => $memberId]);
+        $row = $statement->fetch();
+
+        if (!is_array($row)) {
+            return [];
+        }
+
+        return Json::decodeArray($row['settings_json'] ?? null);
     }
 }
